@@ -6,7 +6,6 @@ import com.samourai.whirlpool.client.WhirlpoolClient;
 import org.bitcoinj.core.NetworkParameters;
 
 public class WhirlpoolClientConfig {
-
   private IHttpClient httpClient;
   private IStompClient stompClient;
   private String server;

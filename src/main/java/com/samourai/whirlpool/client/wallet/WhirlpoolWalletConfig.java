@@ -1,22 +1,24 @@
 package com.samourai.whirlpool.client.wallet;
 
 import com.samourai.api.client.SamouraiApi;
+import com.samourai.api.client.SamouraiFeeTarget;
 import com.samourai.http.client.IHttpClient;
 import com.samourai.stomp.client.IStompClient;
 import com.samourai.wallet.util.FormatsUtilGeneric;
+import com.samourai.whirlpool.client.wallet.beans.Tx0FeeTarget;
 import com.samourai.whirlpool.client.wallet.beans.WhirlpoolServer;
 import com.samourai.whirlpool.client.wallet.pushTx.PushTxService;
 import com.samourai.whirlpool.client.whirlpool.WhirlpoolClientConfig;
-import java.util.Collection;
+import org.apache.commons.lang3.StringUtils;
 import org.bitcoinj.core.NetworkParameters;
 
 public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
   private String feeXpub;
   private int maxClients;
   private int clientDelay;
-  private boolean autoTx0;
+  private String autoTx0PoolId;
+  private Tx0FeeTarget autoTx0FeeTarget;
   private boolean autoMix;
-  private Collection<String> poolIdsByPriority;
 
   private SamouraiApi samouraiApi;
   private PushTxService pushTxService;
@@ -26,6 +28,11 @@ public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
   private int mixsTarget;
   private int persistDelay;
   private int persistCleanDelay;
+
+  private int feeMin;
+  private int feeMax;
+  private int feeFallback;
+  private SamouraiFeeTarget feeTargetPremix;
 
   public WhirlpoolWalletConfig(
       IHttpClient httpClient,
@@ -55,9 +62,9 @@ public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
     // default settings
     this.maxClients = 1;
     this.clientDelay = 30;
-    this.autoTx0 = false;
+    this.autoTx0PoolId = null;
+    this.autoTx0FeeTarget = Tx0FeeTarget.DEFAULT;
     this.autoMix = false;
-    this.poolIdsByPriority = null;
 
     // technical settings
     boolean isTestnet = FormatsUtilGeneric.getInstance().isTestNet(params);
@@ -69,6 +76,11 @@ public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
     this.mixsTarget = 1;
     this.persistDelay = 2; // 2s
     this.persistCleanDelay = 300; // 5min
+
+    this.feeMin = 1;
+    this.feeMax = 510;
+    this.feeFallback = 75;
+    this.feeTargetPremix = SamouraiFeeTarget.BLOCKS_12;
   }
 
   public String getFeeXpub() {
@@ -92,11 +104,23 @@ public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
   }
 
   public boolean isAutoTx0() {
-    return autoTx0;
+    return !StringUtils.isEmpty(autoTx0PoolId);
   }
 
-  public void setAutoTx0(boolean autoTx0) {
-    this.autoTx0 = autoTx0;
+  public String getAutoTx0PoolId() {
+    return autoTx0PoolId;
+  }
+
+  public void setAutoTx0PoolId(String autoTx0PoolId) {
+    this.autoTx0PoolId = autoTx0PoolId;
+  }
+
+  public Tx0FeeTarget getAutoTx0FeeTarget() {
+    return autoTx0FeeTarget;
+  }
+
+  public void setAutoTx0FeeTarget(Tx0FeeTarget autoTx0FeeTarget) {
+    this.autoTx0FeeTarget = autoTx0FeeTarget;
   }
 
   public boolean isAutoMix() {
@@ -105,14 +129,6 @@ public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
 
   public void setAutoMix(boolean autoMix) {
     this.autoMix = autoMix;
-  }
-
-  public Collection<String> getPoolIdsByPriority() {
-    return poolIdsByPriority;
-  }
-
-  public void setPoolIdsByPriority(Collection<String> poolIdsByPriority) {
-    this.poolIdsByPriority = poolIdsByPriority;
   }
 
   public PushTxService getPushTxService() {
@@ -173,5 +189,37 @@ public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
 
   public void setPersistCleanDelay(int persistCleanDelay) {
     this.persistCleanDelay = persistCleanDelay;
+  }
+
+  public int getFeeMin() {
+    return feeMin;
+  }
+
+  public void setFeeMin(int feeMin) {
+    this.feeMin = feeMin;
+  }
+
+  public int getFeeMax() {
+    return feeMax;
+  }
+
+  public void setFeeMax(int feeMax) {
+    this.feeMax = feeMax;
+  }
+
+  public int getFeeFallback() {
+    return feeFallback;
+  }
+
+  public void setFeeFallback(int feeFallback) {
+    this.feeFallback = feeFallback;
+  }
+
+  public SamouraiFeeTarget getFeeTargetPremix() {
+    return feeTargetPremix;
+  }
+
+  public void setFeeTargetPremix(SamouraiFeeTarget feeTargetPremix) {
+    this.feeTargetPremix = feeTargetPremix;
   }
 }

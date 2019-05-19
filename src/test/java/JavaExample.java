@@ -5,13 +5,13 @@ import com.samourai.whirlpool.client.tx0.Tx0;
 import com.samourai.whirlpool.client.wallet.WhirlpoolWallet;
 import com.samourai.whirlpool.client.wallet.WhirlpoolWalletConfig;
 import com.samourai.whirlpool.client.wallet.WhirlpoolWalletService;
+import com.samourai.whirlpool.client.wallet.beans.Tx0FeeTarget;
 import com.samourai.whirlpool.client.wallet.beans.WhirlpoolServer;
 import com.samourai.whirlpool.client.wallet.beans.WhirlpoolUtxo;
 import com.samourai.whirlpool.client.wallet.beans.WhirlpoolWalletState;
 import com.samourai.whirlpool.client.wallet.persist.FileWhirlpoolWalletPersistHandler;
 import com.samourai.whirlpool.client.whirlpool.beans.Pool;
 import java.io.File;
-import java.util.Arrays;
 import java.util.Collection;
 import org.bitcoinj.core.TransactionOutPoint;
 
@@ -31,9 +31,7 @@ public class JavaExample {
     whirlpoolWalletConfig.setScode("foo");
     whirlpoolWalletConfig.setMaxClients(1);
     whirlpoolWalletConfig.setClientDelay(15);
-    whirlpoolWalletConfig.setAutoTx0(false);
     whirlpoolWalletConfig.setAutoMix(false);
-    whirlpoolWalletConfig.setPoolIdsByPriority(Arrays.asList("0.01btc", "0.05btc"));
 
     return whirlpoolWalletConfig;
   }
@@ -63,10 +61,7 @@ public class JavaExample {
     // get state
     WhirlpoolWalletState whirlpoolWalletState = whirlpoolWallet.getState();
 
-    // list pools by client preference
-    Collection<Pool> poolsByPreference = whirlpoolWallet.getPoolsByPreference();
-
-    // list all available pools (even those not in client preference)
+    // list pools
     Collection<Pool> poolsAvailable = whirlpoolWallet.getPoolsAvailable();
 
     // find pool by poolId
@@ -82,16 +77,18 @@ public class JavaExample {
 
       // find eligible pools for this utxo
       int nbOutputsMinForTx0 = 1;
+      Tx0FeeTarget feeTarget = Tx0FeeTarget.DEFAULT;
+
       Collection<Pool> eligiblePools =
-          whirlpoolWallet.findPoolsByPreferenceForTx0(
-              whirlpoolUtxo.getUtxo().value, nbOutputsMinForTx0);
+          whirlpoolWallet.findPoolsForTx0(
+              whirlpoolUtxo.getUtxo().value, nbOutputsMinForTx0, feeTarget);
 
       // set pool for utxo
       whirlpoolWallet.setPool(whirlpoolUtxo, "0.5btc");
 
       // execute tx0
       try {
-        Tx0 tx0 = whirlpoolWallet.tx0(whirlpoolUtxo);
+        Tx0 tx0 = whirlpoolWallet.tx0(whirlpoolUtxo, feeTarget);
         String txid = tx0.getTx().getHashAsString(); // get txid
       } catch (Exception e) {
         // tx0 failed
@@ -107,10 +104,13 @@ public class JavaExample {
 
       // pool for tx0
       Pool pool = whirlpoolWallet.findPoolById("0.01btc"); // provide poolId
+      Tx0FeeTarget feeTarget = Tx0FeeTarget.DEFAULT;
 
       // execute tx0
       try {
-        Tx0 tx0 = whirlpoolWallet.tx0(spendFromOutpoint, spendFromPrivKey, spendFromValue, pool);
+        Tx0 tx0 =
+            whirlpoolWallet.tx0(
+                spendFromOutpoint, spendFromPrivKey, spendFromValue, pool, feeTarget);
         String txid = tx0.getTx().getHashAsString(); // get txid
       } catch (Exception e) {
         // tx0 failed

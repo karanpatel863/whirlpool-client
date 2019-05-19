@@ -11,22 +11,12 @@ import com.samourai.whirlpool.client.exception.EmptyWalletException;
 import com.samourai.whirlpool.client.exception.NotifiableException;
 import com.samourai.whirlpool.client.exception.UnconfirmedUtxoException;
 import com.samourai.whirlpool.client.mix.MixParams;
-import com.samourai.whirlpool.client.mix.handler.Bip84PostmixHandler;
-import com.samourai.whirlpool.client.mix.handler.IPostmixHandler;
-import com.samourai.whirlpool.client.mix.handler.IPremixHandler;
-import com.samourai.whirlpool.client.mix.handler.PremixHandler;
-import com.samourai.whirlpool.client.mix.handler.UtxoWithBalance;
+import com.samourai.whirlpool.client.mix.handler.*;
 import com.samourai.whirlpool.client.mix.listener.MixSuccess;
 import com.samourai.whirlpool.client.tx0.Tx0;
 import com.samourai.whirlpool.client.tx0.Tx0Service;
 import com.samourai.whirlpool.client.utils.ClientUtils;
-import com.samourai.whirlpool.client.wallet.beans.MixOrchestratorState;
-import com.samourai.whirlpool.client.wallet.beans.WhirlpoolAccount;
-import com.samourai.whirlpool.client.wallet.beans.WhirlpoolUtxo;
-import com.samourai.whirlpool.client.wallet.beans.WhirlpoolUtxoConfig;
-import com.samourai.whirlpool.client.wallet.beans.WhirlpoolUtxoPriorityComparator;
-import com.samourai.whirlpool.client.wallet.beans.WhirlpoolUtxoStatus;
-import com.samourai.whirlpool.client.wallet.beans.WhirlpoolWalletState;
+import com.samourai.whirlpool.client.wallet.beans.*;
 import com.samourai.whirlpool.client.wallet.orchestrator.AutoMixOrchestrator;
 import com.samourai.whirlpool.client.wallet.orchestrator.AutoTx0Orchestrator;
 import com.samourai.whirlpool.client.wallet.orchestrator.MixOrchestrator;
@@ -41,6 +31,7 @@ import com.samourai.whirlpool.protocol.beans.Utxo;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java8.util.Lists;
 import java8.util.Optional;
 import java8.util.stream.Collectors;
 import java8.util.stream.StreamSupport;
@@ -128,6 +119,8 @@ public class WhirlpoolWallet {
     }
 
     this.clearCache();
+
+    this.walletPersistHandler.loadUtxoConfigs(this);
   }
 
   public void clearCache() {
@@ -138,31 +131,32 @@ public class WhirlpoolWallet {
     this.cacheData.clearUtxos(account);
   }
 
-  public Collection<Pool> findPoolsByPreferenceForTx0(long utxoValue, int nbOutputsMin)
+  public Collection<Pool> findPoolsForTx0(long utxoValue, int nbOutputsMin, Tx0FeeTarget feeTarget)
       throws Exception {
-    return findPoolsByPreferenceForTx0(utxoValue, nbOutputsMin, false);
+    return findPoolsForTx0(utxoValue, nbOutputsMin, feeTarget, false);
   }
 
-  public Collection<Pool> findPoolsByPreferenceForTx0(
-      long utxoValue, int nbOutputsMin, boolean clearCache) throws Exception {
+  public Collection<Pool> findPoolsForTx0(
+      long utxoValue, int nbOutputsMin, Tx0FeeTarget feeTarget, boolean clearCache)
+      throws Exception {
     // clear cache
     if (clearCache) {
       cacheData.clearPools();
     }
 
     // find eligible pools
-    Collection<Pool> poolsByPreference = getPoolsByPreference();
-    int feeSatPerByte = getFeeSatPerByte();
-    return tx0Service.findPools(nbOutputsMin, poolsByPreference, utxoValue, feeSatPerByte);
+    Collection<Pool> poolsAvailable = getPoolsAvailable();
+    int fee = getFee(feeTarget);
+    return tx0Service.findPools(nbOutputsMin, poolsAvailable, utxoValue, fee, getFeePremix());
   }
 
-  public WhirlpoolUtxo findTx0SpendFrom(int nbOutputsMin, Collection<Pool> poolsByPreference)
+  public WhirlpoolUtxo findTx0SpendFrom(int nbOutputsMin, Pool pool, Tx0FeeTarget feeTarget)
       throws Exception { // throws EmptyWalletException, UnconfirmedUtxoException
-    return findTx0SpendFrom(nbOutputsMin, poolsByPreference, getFeeSatPerByte());
+    return findTx0SpendFrom(nbOutputsMin, pool, feeTarget, getFeePremix());
   }
 
-  public WhirlpoolUtxo findTx0SpendFrom(
-      int nbOutputsMin, Collection<Pool> poolsByPreference, int feeSatPerByte)
+  private WhirlpoolUtxo findTx0SpendFrom(
+      int nbOutputsMin, Pool pool, Tx0FeeTarget feeTarget, int feePremix)
       throws Exception { // throws EmptyWalletException, UnconfirmedUtxoException
 
     Collection<WhirlpoolUtxo> depositUtxosByPriority =
@@ -170,21 +164,25 @@ public class WhirlpoolWallet {
             .sorted(new WhirlpoolUtxoPriorityComparator())
             .collect(Collectors.<WhirlpoolUtxo>toList());
 
+    int feeTx0 = getFee(feeTarget);
+
     return findTx0SpendFrom(
         nbOutputsMin,
-        poolsByPreference,
+        pool,
         depositUtxosByPriority,
-        feeSatPerByte); // throws EmptyWalletException, UnconfirmedUtxoException
+        feeTx0,
+        feePremix); // throws EmptyWalletException, UnconfirmedUtxoException
   }
 
   private WhirlpoolUtxo findTx0SpendFrom(
       int nbOutputsMin,
-      Collection<Pool> poolsByPreference,
+      Pool pool,
       Collection<WhirlpoolUtxo> depositUtxosByPriority,
-      int feeSatPerByte)
+      int feeTx0,
+      int feePremix)
       throws EmptyWalletException, Exception, NotifiableException {
 
-    if (poolsByPreference.isEmpty()) {
+    if (pool == null) {
       throw new NotifiableException("No pool to spend tx0 from");
     }
 
@@ -195,7 +193,7 @@ public class WhirlpoolWallet {
       if (eligiblePool == null) {
         Collection<Pool> eligiblePools =
             tx0Service.findPools(
-                nbOutputsMin, poolsByPreference, whirlpoolUtxo.getUtxo().value, feeSatPerByte);
+                nbOutputsMin, Lists.of(pool), whirlpoolUtxo.getUtxo().value, feeTx0, feePremix);
         if (!eligiblePools.isEmpty()) {
           eligiblePool = eligiblePools.iterator().next();
         }
@@ -216,7 +214,11 @@ public class WhirlpoolWallet {
             // pool was already set => verify pool still eligible
             boolean eligible =
                 tx0Service.isTx0Possible(
-                    whirlpoolUtxo.getUtxo().value, whirlpoolUtxoPool, feeSatPerByte, nbOutputsMin);
+                    whirlpoolUtxo.getUtxo().value,
+                    whirlpoolUtxoPool,
+                    feeTx0,
+                    feePremix,
+                    nbOutputsMin);
             if (eligible) {
               // still eligible
               return whirlpoolUtxo;
@@ -241,33 +243,47 @@ public class WhirlpoolWallet {
 
     // no eligible deposit UTXO found
     long requiredBalance =
-        tx0Service.computeSpendFromBalanceMin(
-            poolsByPreference.iterator().next(), feeSatPerByte, nbOutputsMin);
+        tx0Service.computeSpendFromBalanceMin(pool, feeTx0, feePremix, nbOutputsMin);
     throw new EmptyWalletException("No UTXO found to spend TX0 from", requiredBalance);
   }
 
-  public Tx0 tx0() throws Exception { // throws UnconfirmedUtxoException, EmptyWalletException
-    return tx0(1);
+  public long computeTx0SpendFromBalanceMin(Pool pool, Tx0FeeTarget feeTarget, int nbPremix) {
+    int feeTx0 = getFee(feeTarget);
+    return tx0Service.computeSpendFromBalanceMin(pool, feeTx0, getFeePremix(), nbPremix);
   }
 
-  public Tx0 tx0(int nbOutputsMin)
+  public Tx0 autoTx0() throws Exception { // throws UnconfirmedUtxoException, EmptyWalletException
+    String poolId = config.getAutoTx0PoolId();
+    Tx0FeeTarget feeTarget = config.getAutoTx0FeeTarget();
+    Pool pool = findPoolById(poolId);
+    if (pool == null) {
+      throw new NotifiableException(
+          "No pool found for autoTx0 (autoTx0 = " + (poolId != null ? poolId : "null") + ")");
+    }
+    return tx0(pool, feeTarget);
+  }
+
+  public Tx0 tx0(Pool pool, Tx0FeeTarget feeTarget)
       throws Exception { // throws UnconfirmedUtxoException, EmptyWalletException
-    Collection<Pool> poolsByPreference = getPoolsByPreference();
-    int feeSatPerByte = getFeeSatPerByte();
+    return tx0(pool, feeTarget, 1);
+  }
+
+  public Tx0 tx0(Pool pool, Tx0FeeTarget feeTarget, int nbOutputsMin)
+      throws Exception { // throws UnconfirmedUtxoException, EmptyWalletException
     WhirlpoolUtxo spendFrom =
         findTx0SpendFrom(
             nbOutputsMin,
-            poolsByPreference,
-            feeSatPerByte); // throws UnconfirmedUtxoException, EmptyWalletException
-    return tx0(spendFrom, feeSatPerByte, config.getTx0MaxOutputs());
+            pool,
+            feeTarget,
+            getFeePremix()); // throws UnconfirmedUtxoException, EmptyWalletException
+    return tx0(spendFrom, feeTarget, config.getTx0MaxOutputs());
   }
 
-  public Tx0 tx0(WhirlpoolUtxo whirlpoolUtxoSpendFrom) throws Exception {
-    int feeSatPerByte = getFeeSatPerByte();
-    return tx0(whirlpoolUtxoSpendFrom, feeSatPerByte, config.getTx0MaxOutputs());
+  public Tx0 tx0(WhirlpoolUtxo whirlpoolUtxoSpendFrom, Tx0FeeTarget feeTarget) throws Exception {
+    return tx0(whirlpoolUtxoSpendFrom, feeTarget, config.getTx0MaxOutputs());
   }
 
-  public Tx0 tx0(WhirlpoolUtxo whirlpoolUtxoSpendFrom, int feeSatPerByte, Integer maxOutputs)
+  public Tx0 tx0(WhirlpoolUtxo whirlpoolUtxoSpendFrom, Tx0FeeTarget feeTarget, Integer maxOutputs)
       throws Exception {
 
     // check status
@@ -302,8 +318,17 @@ public class WhirlpoolWallet {
           depositWallet.getAddressAt(utxoSpendFrom).getECKey().getPrivKeyBytes();
       long spendFromValue = whirlpoolUtxoSpendFrom.getUtxo().value;
 
+      int feeTx0 = getFee(feeTarget);
+      int feePremix = getFeePremix();
       Tx0 tx0 =
-          tx0(spendFromOutpoint, spendFromPrivKey, spendFromValue, pool, feeSatPerByte, maxOutputs);
+          tx0(
+              spendFromOutpoint,
+              spendFromPrivKey,
+              spendFromValue,
+              pool,
+              feeTx0,
+              feePremix,
+              maxOutputs);
 
       // success
       whirlpoolUtxoSpendFrom.setStatus(WhirlpoolUtxoStatus.TX0_SUCCESS, 100);
@@ -326,15 +351,17 @@ public class WhirlpoolWallet {
       TransactionOutPoint spendFromOutpoint,
       byte[] spendFromPrivKey,
       long spendFromValue,
-      Pool pool)
+      Pool pool,
+      Tx0FeeTarget feeTarget)
       throws Exception {
-    int feeSatPerByte = getFeeSatPerByte();
+    int feeTx0 = getFee(feeTarget);
     return tx0(
         spendFromOutpoint,
         spendFromPrivKey,
         spendFromValue,
         pool,
-        feeSatPerByte,
+        feeTx0,
+        getFeePremix(),
         config.getTx0MaxOutputs());
   }
 
@@ -343,25 +370,28 @@ public class WhirlpoolWallet {
       byte[] spendFromPrivKey,
       long spendFromValue,
       Pool pool,
-      int feeSatPerByte,
+      int feeTx0,
+      int feePremix,
       Integer maxOutputs)
       throws Exception {
 
     Pools pools = getPoolsResponse();
 
     // check balance min
-    final long spendFromBalanceMin = tx0Service.computeSpendFromBalanceMin(pool, feeSatPerByte, 1);
+    final long spendFromBalanceMin =
+        tx0Service.computeSpendFromBalanceMin(pool, feeTx0, feePremix, 1);
     if (spendFromValue < spendFromBalanceMin) {
-      throw new Exception(
+      throw new NotifiableException(
           "Insufficient utxo value for Tx0: " + spendFromValue + " < " + spendFromBalanceMin);
     }
 
     log.info(
         " • Tx0: spendFrom="
             + spendFromOutpoint
-            + " ("
-            + spendFromValue
-            + " sats)"
+            + ", feeTx0="
+            + feeTx0
+            + ", feePremix="
+            + feePremix
             + ", poolId="
             + pool.getPoolId()
             + ", maxOutputs="
@@ -369,35 +399,45 @@ public class WhirlpoolWallet {
 
     // run tx0
     IIndexHandler feeIndexHandler = walletPersistHandler.getIndexHandler(INDEX_FEE);
-    Tx0 tx0 =
-        tx0Service.tx0(
-            spendFromPrivKey,
-            spendFromOutpoint,
-            depositWallet,
-            premixWallet,
-            feeIndexHandler,
-            feeSatPerByte,
-            pools,
-            pool,
-            maxOutputs);
+    int initialFeeIndice = feeIndexHandler.get();
+    int initialPremixIndex = premixWallet.getIndexHandler().get();
+    try {
+      Tx0 tx0 =
+          tx0Service.tx0(
+              spendFromPrivKey,
+              spendFromOutpoint,
+              depositWallet,
+              premixWallet,
+              feeIndexHandler,
+              feeTx0,
+              feePremix,
+              pools,
+              pool,
+              maxOutputs);
 
-    log.info(
-        " • Tx0 result: txid="
-            + tx0.getTx().getHashAsString()
-            + ", nbPremixs="
-            + tx0.getPremixUtxos().size());
-    if (log.isDebugEnabled()) {
-      log.debug(tx0.getTx().toString());
+      log.info(
+          " • Tx0 result: txid="
+              + tx0.getTx().getHashAsString()
+              + ", nbPremixs="
+              + tx0.getPremixUtxos().size());
+      if (log.isDebugEnabled()) {
+        log.debug(tx0.getTx().toString());
+      }
+
+      // pushTx
+      config.getPushTxService().pushTx(tx0.getTx());
+
+      // refresh utxos
+      ClientUtils.sleepRefreshUtxos(config.getNetworkParameters());
+      clearCache(WhirlpoolAccount.DEPOSIT);
+      clearCache(WhirlpoolAccount.PREMIX);
+      return tx0;
+    } catch (Exception e) {
+      // revert indexs
+      feeIndexHandler.set(initialFeeIndice);
+      premixWallet.getIndexHandler().set(initialPremixIndex);
+      throw e;
     }
-
-    // pushTx
-    config.getPushTxService().pushTx(tx0.getTx());
-
-    // refresh utxos
-    ClientUtils.sleepRefreshUtxos(config.getNetworkParameters());
-    clearCache(WhirlpoolAccount.DEPOSIT);
-    clearCache(WhirlpoolAccount.PREMIX);
-    return tx0;
   }
 
   public void start() {
@@ -469,8 +509,12 @@ public class WhirlpoolWallet {
     this.mixOrchestrator.mixStop(whirlpoolUtxo);
   }
 
-  public int getFeeSatPerByte() {
-    return cacheData.getFeeSatPerByte();
+  public int getFee(Tx0FeeTarget feeTarget) {
+    return cacheData.getFeeSatPerByte(feeTarget.getFeeTarget());
+  }
+
+  public int getFeePremix() {
+    return cacheData.getFeeSatPerByte(config.getFeeTargetPremix());
   }
 
   public Pools getPoolsResponse() throws Exception {
@@ -489,18 +533,10 @@ public class WhirlpoolWallet {
   }
 
   public Collection<Pool> getPoolsAvailable(boolean clearCache) throws Exception {
-    return getPoolsResponse(clearCache).getPools();
-  }
-
-  public Collection<Pool> getPoolsByPreference() throws Exception {
-    return getPoolsByPreference(false);
-  }
-
-  public Collection<Pool> getPoolsByPreference(boolean clearCache) throws Exception {
     if (clearCache) {
       cacheData.clearPools();
     }
-    return cacheData.getPoolsByPreference();
+    return cacheData.getPools();
   }
 
   public Pool findPoolById(String poolId) throws Exception {
@@ -511,16 +547,20 @@ public class WhirlpoolWallet {
   }
 
   public Pool findPoolById(String poolId, boolean clearCache) throws Exception {
-    return getPoolsResponse(clearCache).findPoolById(poolId);
+    for (Pool pool : getPoolsAvailable(clearCache)) {
+      if (pool.getPoolId().equals(poolId)) {
+        return pool;
+      }
+    }
+    return null;
   }
 
-  public Collection<Pool> findPoolsByPreferenceForPremix(long utxoValue, boolean liquidity)
+  public Collection<Pool> findPoolsForPremix(long utxoValue, boolean liquidity) throws Exception {
+    return findPoolsForPremix(utxoValue, liquidity, false);
+  }
+
+  public Collection<Pool> findPoolsForPremix(long utxoValue, boolean liquidity, boolean clearCache)
       throws Exception {
-    return findPoolsByPreferenceForPremix(utxoValue, liquidity, false);
-  }
-
-  public Collection<Pool> findPoolsByPreferenceForPremix(
-      long utxoValue, boolean liquidity, boolean clearCache) throws Exception {
     // clear cache
     if (clearCache) {
       cacheData.clearPools();
@@ -528,7 +568,7 @@ public class WhirlpoolWallet {
 
     // find eligible pools
     List<Pool> poolsAccepted = new ArrayList<Pool>();
-    for (Pool pool : getPoolsByPreference()) {
+    for (Pool pool : getPoolsAvailable()) {
       if (pool.checkInputBalance(utxoValue, liquidity)) {
         poolsAccepted.add(pool);
       }
@@ -730,7 +770,7 @@ public class WhirlpoolWallet {
     }
 
     // default value
-    utxoConfig = new WhirlpoolUtxoConfig(config.getMixsTarget());
+    utxoConfig = new WhirlpoolUtxoConfig(this, config.getMixsTarget());
     if (WhirlpoolAccount.POSTMIX.equals(whirlpoolUtxo.getAccount())) {
       // POSTMIX was already mixed once (at least)
       utxoConfig.incrementMixsDone();
@@ -769,6 +809,23 @@ public class WhirlpoolWallet {
         }
       }
     }
+    if (utxoConfig != null && utxoConfig.getPoolId() != null) {
+      // check configured pool exists
+      Pool pool = null;
+      try {
+        pool = findPoolById(utxoConfig.getPoolId());
+      } catch (Exception e) {
+        log.error("", e);
+      }
+      if (pool == null) {
+        // clear pool configuration
+        log.warn(
+            "pool not found for utxoConfig: "
+                + utxoConfig.getPoolId()
+                + " => reset utxoConfig.poolId");
+        utxoConfig.setPoolId(null);
+      }
+    }
 
     // auto-assign pool when possible
     if (whirlpoolUtxo.getUtxoConfig().getPoolId() == null) {
@@ -794,14 +851,14 @@ public class WhirlpoolWallet {
 
     // find eligible pools for tx0
     if (WhirlpoolAccount.DEPOSIT.equals(whirlpoolUtxo.getAccount())) {
-      eligiblePools = findPoolsByPreferenceForTx0(whirlpoolUtxo.getUtxo().value, 1);
+      eligiblePools = findPoolsForTx0(whirlpoolUtxo.getUtxo().value, 1, Tx0FeeTarget.DEFAULT);
     }
 
     // find eligible pools for mix
     else if (WhirlpoolAccount.PREMIX.equals(whirlpoolUtxo.getAccount())
         || WhirlpoolAccount.POSTMIX.equals(whirlpoolUtxo.getAccount())) {
       boolean liquidity = WhirlpoolAccount.POSTMIX.equals(whirlpoolUtxo.getAccount());
-      eligiblePools = findPoolsByPreferenceForPremix(whirlpoolUtxo.getUtxo().value, liquidity);
+      eligiblePools = findPoolsForPremix(whirlpoolUtxo.getUtxo().value, liquidity);
     }
 
     // auto-assign pool by preference when found
@@ -859,5 +916,21 @@ public class WhirlpoolWallet {
 
   public boolean hasMoreMixableOrUnconfirmed() {
     return mixOrchestrator.hasMoreMixableOrUnconfirmed();
+  }
+
+  public String getZpubDeposit() {
+    return depositWallet.getZpub();
+  }
+
+  public String getZpubPremix() {
+    return premixWallet.getZpub();
+  }
+
+  public String getZpubPostmix() {
+    return postmixWallet.getZpub();
+  }
+
+  public void onUtxoConfigChanged(WhirlpoolUtxoConfig whirlpoolUtxoConfig) {
+    getWalletPersistHandler().onUtxoConfigChanged(whirlpoolUtxoConfig);
   }
 }
