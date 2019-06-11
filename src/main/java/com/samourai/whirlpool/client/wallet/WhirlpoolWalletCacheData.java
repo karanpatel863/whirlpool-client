@@ -2,9 +2,9 @@ package com.samourai.whirlpool.client.wallet;
 
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
-import com.samourai.api.client.SamouraiFee;
-import com.samourai.api.client.SamouraiFeeTarget;
-import com.samourai.api.client.beans.UnspentResponse.UnspentOutput;
+import com.samourai.wallet.api.backend.SamouraiFee;
+import com.samourai.wallet.api.backend.SamouraiFeeTarget;
+import com.samourai.wallet.api.backend.beans.UnspentResponse.UnspentOutput;
 import com.samourai.wallet.client.Bip84ApiWallet;
 import com.samourai.whirlpool.client.WhirlpoolClient;
 import com.samourai.whirlpool.client.utils.ClientUtils;
@@ -29,8 +29,6 @@ import org.slf4j.LoggerFactory;
 /** Thread-safe cache data for WhirlpooWallet. */
 public class WhirlpoolWalletCacheData {
   private final Logger log = LoggerFactory.getLogger(WhirlpoolWalletCacheData.class);
-  private static final long FEE_REFRESH_DELAY = 300; // 5m
-  private static final long POOLS_REFRESH_DELAY = 3600; // 1h
 
   private WhirlpoolWallet whirlpoolWallet;
   private WhirlpoolWalletConfig config;
@@ -57,7 +55,8 @@ public class WhirlpoolWalletCacheData {
 
     // fee
     this.samouraiFee =
-        Suppliers.memoizeWithExpiration(initFeeSatPerByte(), FEE_REFRESH_DELAY, TimeUnit.SECONDS);
+        Suppliers.memoizeWithExpiration(
+            initFeeSatPerByte(), config.getRefreshFeeDelay(), TimeUnit.SECONDS);
 
     // pools
     clearPools();
@@ -112,10 +111,12 @@ public class WhirlpoolWalletCacheData {
 
   public void clearPools() {
     this.poolsResponse =
-        Suppliers.memoizeWithExpiration(initPoolsResponse(), POOLS_REFRESH_DELAY, TimeUnit.SECONDS);
+        Suppliers.memoizeWithExpiration(
+            initPoolsResponse(), config.getRefreshPoolsDelay(), TimeUnit.SECONDS);
 
     this.pools =
-        Suppliers.memoizeWithExpiration(initPools(), POOLS_REFRESH_DELAY, TimeUnit.SECONDS);
+        Suppliers.memoizeWithExpiration(
+            initPools(), config.getRefreshPoolsDelay(), TimeUnit.SECONDS);
   }
 
   public Pools getPoolsResponse() throws Exception {
@@ -217,7 +218,7 @@ public class WhirlpoolWalletCacheData {
           final Map<String, UnspentOutput> freshUtxos =
               new ConcurrentHashMap<String, UnspentOutput>();
           for (UnspentOutput utxo : fetchedUtxos) {
-            freshUtxos.put(utxo.toKey(), utxo);
+            freshUtxos.put(ClientUtils.utxoToKey(utxo), utxo);
           }
 
           // replace utxos
@@ -266,7 +267,7 @@ public class WhirlpoolWalletCacheData {
             new Consumer<WhirlpoolUtxo>() {
               @Override
               public void accept(WhirlpoolUtxo whirlpoolUtxo) {
-                String key = whirlpoolUtxo.getUtxo().toKey();
+                String key = ClientUtils.utxoToKey(whirlpoolUtxo.getUtxo());
 
                 UnspentOutput freshUtxo = freshUtxos.get(key);
                 if (freshUtxo != null) {
@@ -291,7 +292,7 @@ public class WhirlpoolWalletCacheData {
             new Consumer<UnspentOutput>() {
               @Override
               public void accept(UnspentOutput utxo) {
-                String key = utxo.toKey();
+                String key = ClientUtils.utxoToKey(utxo);
                 if (!currentUtxos.containsKey(key)) {
                   // add missing
                   WhirlpoolUtxo whirlpoolUtxo =

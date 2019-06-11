@@ -1,19 +1,26 @@
 package com.samourai.whirlpool.client.wallet;
 
 import com.samourai.api.client.SamouraiApi;
-import com.samourai.api.client.SamouraiFeeTarget;
 import com.samourai.http.client.IHttpClient;
 import com.samourai.stomp.client.IStompClient;
-import com.samourai.wallet.util.FormatsUtilGeneric;
+import com.samourai.wallet.api.backend.BackendServer;
+import com.samourai.wallet.api.backend.SamouraiFeeTarget;
 import com.samourai.whirlpool.client.wallet.beans.Tx0FeeTarget;
 import com.samourai.whirlpool.client.wallet.beans.WhirlpoolServer;
+import com.samourai.whirlpool.client.wallet.persist.WhirlpoolWalletPersistHandler;
 import com.samourai.whirlpool.client.wallet.pushTx.PushTxService;
 import com.samourai.whirlpool.client.whirlpool.WhirlpoolClientConfig;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 import org.bitcoinj.core.NetworkParameters;
+import org.bitcoinj.params.MainNetParams;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
-  private String feeXpub;
+  private final Logger log = LoggerFactory.getLogger(WhirlpoolWalletConfig.class);
+
   private int maxClients;
   private int clientDelay;
   private String autoTx0PoolId;
@@ -25,6 +32,8 @@ public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
   private int tx0Delay;
   private Integer tx0MaxOutputs;
   private int refreshUtxoDelay;
+  private int refreshFeeDelay;
+  private int refreshPoolsDelay;
   private int mixsTarget;
   private int persistDelay;
   private int persistCleanDelay;
@@ -37,27 +46,26 @@ public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
   public WhirlpoolWalletConfig(
       IHttpClient httpClient,
       IStompClient stompClient,
+      WhirlpoolWalletPersistHandler persistHandler,
       String serverUrl,
       WhirlpoolServer whirlpoolServer) {
     this(
         httpClient,
         stompClient,
+        persistHandler,
         serverUrl,
         whirlpoolServer.getParams(),
-        whirlpoolServer.isSsl(),
-        whirlpoolServer.getFeeData());
+        whirlpoolServer.isSsl());
   }
 
   public WhirlpoolWalletConfig(
       IHttpClient httpClient,
       IStompClient stompClient,
+      WhirlpoolWalletPersistHandler persistHandler,
       String server,
       NetworkParameters params,
-      boolean ssl,
-      String feeXpub) {
-    super(httpClient, stompClient, server, params, ssl);
-
-    this.feeXpub = feeXpub;
+      boolean ssl) {
+    super(httpClient, stompClient, persistHandler, server, params, ssl);
 
     // default settings
     this.maxClients = 1;
@@ -67,12 +75,15 @@ public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
     this.autoMix = false;
 
     // technical settings
-    boolean isTestnet = FormatsUtilGeneric.getInstance().isTestNet(params);
-    this.samouraiApi = new SamouraiApi(httpClient, isTestnet); // single instance to SamouraiApi
+    BackendServer backendServer =
+        (params instanceof MainNetParams ? BackendServer.MAINNET : BackendServer.TESTNET);
+    this.samouraiApi = new SamouraiApi(httpClient, backendServer);
     this.pushTxService = samouraiApi; // use backend as default push service
     this.tx0Delay = 30;
     this.tx0MaxOutputs = null; // spend whole utxo when possible
     this.refreshUtxoDelay = 60; // 1min
+    this.refreshFeeDelay = 300; // 5min
+    this.refreshPoolsDelay = 300; // 5min
     this.mixsTarget = 1;
     this.persistDelay = 2; // 2s
     this.persistCleanDelay = 300; // 5min
@@ -81,10 +92,6 @@ public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
     this.feeMax = 510;
     this.feeFallback = 75;
     this.feeTargetPremix = SamouraiFeeTarget.BLOCKS_12;
-  }
-
-  public String getFeeXpub() {
-    return feeXpub;
   }
 
   public int getMaxClients() {
@@ -167,6 +174,22 @@ public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
     this.refreshUtxoDelay = refreshUtxoDelay;
   }
 
+  public int getRefreshFeeDelay() {
+    return refreshFeeDelay;
+  }
+
+  public void setRefreshFeeDelay(int refreshFeeDelay) {
+    this.refreshFeeDelay = refreshFeeDelay;
+  }
+
+  public int getRefreshPoolsDelay() {
+    return refreshPoolsDelay;
+  }
+
+  public void setRefreshPoolsDelay(int refreshPoolsDelay) {
+    this.refreshPoolsDelay = refreshPoolsDelay;
+  }
+
   public int getMixsTarget() {
     return mixsTarget;
   }
@@ -221,5 +244,61 @@ public class WhirlpoolWalletConfig extends WhirlpoolClientConfig {
 
   public void setFeeTargetPremix(SamouraiFeeTarget feeTargetPremix) {
     this.feeTargetPremix = feeTargetPremix;
+  }
+
+  public Map<String, String> getConfigInfo() {
+    Map<String, String> configInfo = new LinkedHashMap<String, String>();
+    configInfo.put(
+        "server",
+        "url="
+            + getServer()
+            + ", network="
+            + getNetworkParameters().getPaymentProtocolId()
+            + ", ssl="
+            + Boolean.toString(isSsl()));
+    configInfo.put("pushtx", getPushTxService().getClass().getName());
+    configInfo.put(
+        "persist",
+        "persistDelay="
+            + Integer.toString(getPersistDelay())
+            + ", persistCleanDelay="
+            + Integer.toString(getPersistCleanDelay()));
+    configInfo.put(
+        "refreshDelay",
+        "refreshUtxoDelay="
+            + refreshUtxoDelay
+            + ", refreshFeeDelay"
+            + refreshFeeDelay
+            + ", refreshPoolsDelay="
+            + refreshPoolsDelay);
+    configInfo.put(
+        "mix",
+        "maxClients="
+            + getMaxClients()
+            + ", clientDelay="
+            + getClientDelay()
+            + ", tx0Delay="
+            + getTx0Delay()
+            + ", tx0MaxOutputs="
+            + getTx0MaxOutputs()
+            + ", autoTx0="
+            + (isAutoTx0() ? getAutoTx0PoolId() : "false")
+            + ", autoTx0FeeTarget="
+            + getAutoTx0FeeTarget().name()
+            + ", autoMix="
+            + isAutoMix()
+            + ", mixsTarget="
+            + getMixsTarget());
+    configInfo.put(
+        "fee",
+        "fallback="
+            + getFeeFallback()
+            + ", min="
+            + getFeeMin()
+            + ", max="
+            + getFeeMax()
+            + ", targetPremix="
+            + getFeeTargetPremix());
+    return configInfo;
   }
 }

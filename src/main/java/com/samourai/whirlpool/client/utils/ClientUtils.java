@@ -2,12 +2,11 @@ package com.samourai.whirlpool.client.utils;
 
 import ch.qos.logback.classic.Level;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.samourai.api.client.beans.UnspentResponse;
-import com.samourai.api.client.beans.UnspentResponse.UnspentOutput;
-import com.samourai.http.client.HttpException;
+import com.samourai.wallet.api.backend.beans.HttpException;
+import com.samourai.wallet.api.backend.beans.UnspentResponse;
+import com.samourai.wallet.api.backend.beans.UnspentResponse.UnspentOutput;
 import com.samourai.wallet.segwit.bech32.Bech32UtilGeneric;
 import com.samourai.wallet.util.FormatsUtilGeneric;
-import com.samourai.wallet.util.XORUtil;
 import com.samourai.whirlpool.client.wallet.beans.WhirlpoolUtxo;
 import com.samourai.whirlpool.client.wallet.beans.WhirlpoolUtxoConfig;
 import com.samourai.whirlpool.protocol.WhirlpoolProtocol;
@@ -170,8 +169,17 @@ public class ClientUtils {
     return sat / 100000000.0;
   }
 
+  public static String utxoToKey(UnspentOutput unspentOutput) {
+    return unspentOutput.tx_hash + ':' + unspentOutput.tx_output_n;
+  }
+
   public static String utxoToKey(String utxoHash, int utxoIndex) {
     return utxoHash + ':' + utxoIndex;
+  }
+
+  public static String getTxHex(Transaction tx) {
+    String txHex = org.bitcoinj.core.Utils.HEX.encode(tx.bitcoinSerialize());
+    return txHex;
   }
 
   public static void sleepRefreshUtxos(NetworkParameters params) {
@@ -194,14 +202,16 @@ public class ClientUtils {
     return Sha256Hash.wrap(Sha256Hash.hash(bytes)).toString();
   }
 
-  public static String decodeFeeData(String feeData) throws Exception {
-    String[] segments = feeData.split(";");
-    return XORUtil.getInstance().decodeAsString(segments[0], segments[1]);
+  public static String maskString(String value) {
+    return maskString(value, 3);
   }
 
-  public static String maskString(String value, int start, int end) {
-    return value.substring(0, Math.min(start, value.length()))
+  private static String maskString(String value, int startEnd) {
+    if (value.length() <= startEnd) {
+      return value;
+    }
+    return value.substring(0, Math.min(startEnd, value.length()))
         + "..."
-        + value.substring(Math.max(0, value.length() - end), value.length());
+        + value.substring(Math.max(0, value.length() - startEnd), value.length());
   }
 }

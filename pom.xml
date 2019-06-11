@@ -14,13 +14,13 @@
         <dependency>
             <groupId>com.github.Samourai-Wallet</groupId>
             <artifactId>whirlpool-protocol</artifactId>
-            <version>0.20.0</version>
+            <version>0.21.0</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>com.github.Samourai-Wallet</groupId>
             <artifactId>extlibj</artifactId>
-            <version>develop-SNAPSHOT</version>
+            <version>0.0.4</version>
         </dependency>
         <dependency>
             <groupId>org.apache.commons</groupId>

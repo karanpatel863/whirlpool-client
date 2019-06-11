@@ -1,7 +1,8 @@
 package com.samourai.whirlpool.client.wallet.persist;
 
 import com.samourai.api.client.SamouraiApi;
-import com.samourai.api.client.beans.UnspentResponse.UnspentOutput;
+import com.samourai.wallet.api.backend.BackendServer;
+import com.samourai.wallet.api.backend.beans.UnspentResponse.UnspentOutput;
 import com.samourai.wallet.client.Bip84ApiWallet;
 import com.samourai.wallet.client.indexHandler.MemoryIndexHandler;
 import com.samourai.wallet.hd.HD_Wallet;
@@ -41,11 +42,11 @@ public class FileWhirlpoolWalletPersistHandlerTest extends AbstractTest {
     this.persistHandler = new FileWhirlpoolWalletPersistHandler(fileState, fileUtxos);
     persistHandler.setInitialized(true);
 
-    this.whirlpoolWallet = computeWallet(new SamouraiApi(null, true));
+    this.whirlpoolWallet = computeWallet(new SamouraiApi(null, BackendServer.TESTNET));
   }
 
   private void reload() {
-    ((FileWhirlpoolWalletPersistHandler) whirlpoolWallet.getWalletPersistHandler())
+    ((FileWhirlpoolWalletPersistHandler) whirlpoolWallet.getConfig().getPersistHandler())
         .getUtxoConfigHandler()
         .loadUtxoConfigs(whirlpoolWallet);
   }
@@ -153,12 +154,14 @@ public class FileWhirlpoolWalletPersistHandlerTest extends AbstractTest {
             false,
             1,
             1);
-    return new WhirlpoolWalletService(
-            new WhirlpoolWalletConfig(
-                null,
-                null,
-                WhirlpoolServer.LOCAL_TESTNET.getServerUrl(),
-                WhirlpoolServer.LOCAL_TESTNET))
-        .openWallet(persistHandler, depositWallet, premixWallet, postmixWallet);
+    WhirlpoolWalletConfig config =
+        new WhirlpoolWalletConfig(
+            null,
+            null,
+            persistHandler,
+            WhirlpoolServer.LOCAL_TESTNET.getServerUrl(),
+            WhirlpoolServer.LOCAL_TESTNET);
+    return new WhirlpoolWalletService()
+        .openWallet(config, depositWallet, premixWallet, postmixWallet);
   }
 }

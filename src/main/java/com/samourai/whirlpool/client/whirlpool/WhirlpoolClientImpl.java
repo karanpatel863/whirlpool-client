@@ -1,6 +1,6 @@
 package com.samourai.whirlpool.client.whirlpool;
 
-import com.samourai.http.client.HttpException;
+import com.samourai.wallet.api.backend.beans.HttpException;
 import com.samourai.whirlpool.client.WhirlpoolClient;
 import com.samourai.whirlpool.client.exception.NotifiableException;
 import com.samourai.whirlpool.client.mix.MixClient;
@@ -53,10 +53,9 @@ public class WhirlpoolClientImpl implements WhirlpoolClient {
 
   @Override
   public Pools fetchPools() throws HttpException, NotifiableException {
-    String url =
-        WhirlpoolProtocol.getUrlFetchPools(config.getServer(), config.isSsl(), config.getScode());
+    String url = WhirlpoolProtocol.getUrlFetchPools(config.getServer(), config.isSsl());
     try {
-      PoolsResponse poolsResponse = config.getHttpClient().parseJson(url, PoolsResponse.class);
+      PoolsResponse poolsResponse = config.getHttpClient().getJson(url, PoolsResponse.class);
       return computePools(poolsResponse);
     } catch (HttpException e) {
       String restErrorResponseMessage = ClientUtils.parseRestErrorMessage(e);
@@ -75,6 +74,7 @@ public class WhirlpoolClientImpl implements WhirlpoolClient {
       pool.setDenomination(poolInfo.denomination);
       pool.setFeeValue(poolInfo.feeValue);
       pool.setMustMixBalanceMin(poolInfo.mustMixBalanceMin);
+      pool.setMustMixBalanceCap(poolInfo.mustMixBalanceCap);
       pool.setMustMixBalanceMax(poolInfo.mustMixBalanceMax);
       pool.setMinAnonymitySet(poolInfo.minAnonymitySet);
       pool.setMinMustMix(poolInfo.minMustMix);
@@ -86,11 +86,7 @@ public class WhirlpoolClientImpl implements WhirlpoolClient {
       pool.setNbConfirmed(poolInfo.nbConfirmed);
       listPools.add(pool);
     }
-    Pools pools =
-        new Pools(
-            listPools,
-            poolsResponse.feePaymentCode,
-            WhirlpoolProtocol.decodeBytes(poolsResponse.feePayload64));
+    Pools pools = new Pools(listPools);
     return pools;
   }
 
